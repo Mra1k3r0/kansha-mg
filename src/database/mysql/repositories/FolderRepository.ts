@@ -10,6 +10,13 @@ import type { PaginatedResult, QueryOptions } from '../../interfaces/IRepository
 import type { Folder, CreateFolderDTO, UpdateFolderDTO } from '../../../domain/models/Folder.js';
 import { query, execute } from '../connection.js';
 
+// Convert ISO 8601 datetime to MySQL datetime format
+function toMySQLDatetime(isoString: string | null | undefined): string | null {
+  if (!isoString) return null;
+  // Convert '2026-01-27T14:58:12.566Z' to '2026-01-27 14:58:12'
+  return isoString.replace('T', ' ').replace(/\.\d{3}Z$/, '').replace('Z', '');
+}
+
 interface FolderRow extends RowDataPacket {
   id: string;
   owner_id: string;
@@ -129,7 +136,7 @@ export class FolderRepository implements IFolderRepository {
 
   async create(data: CreateFolderDTO & { ownerId: string }): Promise<Folder> {
     const id = uuidv4();
-    const now = new Date().toISOString();
+    const now = toMySQLDatetime(new Date().toISOString());
 
     await execute(
       `INSERT INTO folders (id, owner_id, name, color, created_at, updated_at, is_deleted)
@@ -158,7 +165,7 @@ export class FolderRepository implements IFolderRepository {
     }
     if (data.deletedAt !== undefined) {
       updates.push('deleted_at = ?');
-      params.push(data.deletedAt);
+      params.push(toMySQLDatetime(data.deletedAt));
     }
 
     if (updates.length === 0) {
@@ -166,7 +173,7 @@ export class FolderRepository implements IFolderRepository {
     }
 
     updates.push('updated_at = ?');
-    params.push(new Date().toISOString());
+    params.push(toMySQLDatetime(new Date().toISOString()));
     params.push(id);
 
     await execute(
@@ -211,7 +218,7 @@ export class FolderRepository implements IFolderRepository {
     if (existing.length > 0) {
       await this.update(id, data);
     } else {
-      const now = new Date().toISOString();
+      const now = toMySQLDatetime(new Date().toISOString());
       await execute(
         `INSERT INTO folders (id, owner_id, name, color, created_at, updated_at, is_deleted, deleted_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -220,10 +227,10 @@ export class FolderRepository implements IFolderRepository {
           ownerId,
           data.name || '',
           data.color || '#808080',
-          data.createdAt || now,
-          data.updatedAt || now,
+          toMySQLDatetime(data.createdAt) || now,
+          toMySQLDatetime(data.updatedAt) || now,
           data.isDeleted ? 1 : 0,
-          data.deletedAt || null,
+          toMySQLDatetime(data.deletedAt),
         ]
       );
     }
@@ -262,10 +269,11 @@ export class FolderRepository implements IFolderRepository {
   }
 
   async softDelete(folderId: string, ownerId: string): Promise<void> {
+    const now = toMySQLDatetime(new Date().toISOString());
     await execute(
       `UPDATE folders SET is_deleted = 1, deleted_at = ?, updated_at = ? 
        WHERE id = ? AND owner_id = ?`,
-      [new Date().toISOString(), new Date().toISOString(), folderId, ownerId]
+      [now, now, folderId, ownerId]
     );
   }
 
@@ -273,7 +281,7 @@ export class FolderRepository implements IFolderRepository {
     await execute(
       `UPDATE folders SET is_deleted = 0, deleted_at = NULL, updated_at = ? 
        WHERE id = ? AND owner_id = ?`,
-      [new Date().toISOString(), folderId, ownerId]
+      [toMySQLDatetime(new Date().toISOString()), folderId, ownerId]
     );
   }
 

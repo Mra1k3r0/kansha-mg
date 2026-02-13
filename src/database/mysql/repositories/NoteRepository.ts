@@ -17,6 +17,13 @@ import type {
 } from '../../../domain/models/Note.js';
 import { query, execute } from '../connection.js';
 
+// Convert ISO 8601 datetime to MySQL datetime format
+function toMySQLDatetime(isoString: string | null | undefined): string | null {
+  if (!isoString) return null;
+  // Convert '2026-01-27T14:58:12.566Z' to '2026-01-27 14:58:12'
+  return isoString.replace('T', ' ').replace(/\.\d{3}Z$/, '').replace('Z', '');
+}
+
 interface NoteRow extends RowDataPacket {
   id: string;
   owner_id: string;
@@ -208,7 +215,7 @@ export class NoteRepository implements INoteRepository {
 
   async create(data: CreateNoteDTO & { ownerId: string }): Promise<Note> {
     const id = uuidv4();
-    const now = new Date().toISOString();
+    const now = toMySQLDatetime(new Date().toISOString());
 
     await execute(
       `INSERT INTO notes (
@@ -284,7 +291,7 @@ export class NoteRepository implements INoteRepository {
     }
     if (data.expiresAt !== undefined) {
       updates.push('expires_at = ?');
-      params.push(data.expiresAt);
+      params.push(toMySQLDatetime(data.expiresAt));
     }
     if (data.isDeleted !== undefined) {
       updates.push('is_deleted = ?');
@@ -292,7 +299,7 @@ export class NoteRepository implements INoteRepository {
     }
     if (data.deletedAt !== undefined) {
       updates.push('deleted_at = ?');
-      params.push(data.deletedAt);
+      params.push(toMySQLDatetime(data.deletedAt));
     }
     if (data.originalFolderId !== undefined) {
       updates.push('original_folder_id = ?');
@@ -312,7 +319,7 @@ export class NoteRepository implements INoteRepository {
     }
 
     updates.push('updated_at = ?');
-    params.push(new Date().toISOString());
+    params.push(toMySQLDatetime(new Date().toISOString()));
     params.push(id);
 
     await execute(
@@ -357,7 +364,7 @@ export class NoteRepository implements INoteRepository {
     if (existing.length > 0) {
       await this.update(id, data);
     } else {
-      const now = new Date().toISOString();
+      const now = toMySQLDatetime(new Date().toISOString());
       await execute(
         `INSERT INTO notes (
           id, owner_id, title, content, tags, pinned, favorite, folder_id,
@@ -378,14 +385,14 @@ export class NoteRepository implements INoteRepository {
           data.password || null,
           data.shareUrl || null,
           data.shortId || null,
-          data.expiresAt || null,
+          toMySQLDatetime(data.expiresAt),
           data.views || 0,
           JSON.stringify(data.versions || []),
           JSON.stringify(data.comments || []),
-          data.createdAt || now,
-          data.updatedAt || now,
+          toMySQLDatetime(data.createdAt) || now,
+          toMySQLDatetime(data.updatedAt) || now,
           data.isDeleted ? 1 : 0,
-          data.deletedAt || null,
+          toMySQLDatetime(data.deletedAt),
           data.originalFolderId || null,
           data.originalPinned !== undefined ? (data.originalPinned ? 1 : 0) : null,
           data.originalFavorite !== undefined ? (data.originalFavorite ? 1 : 0) : null,
@@ -433,7 +440,7 @@ export class NoteRepository implements INoteRepository {
     const versions = [...note.versions, version];
     await execute(
       'UPDATE notes SET versions = ?, updated_at = ? WHERE id = ?',
-      [JSON.stringify(versions), new Date().toISOString(), noteId]
+      [JSON.stringify(versions), toMySQLDatetime(new Date().toISOString()), noteId]
     );
   }
 
@@ -444,7 +451,7 @@ export class NoteRepository implements INoteRepository {
     const comments = [...note.comments, comment];
     await execute(
       'UPDATE notes SET comments = ?, updated_at = ? WHERE id = ?',
-      [JSON.stringify(comments), new Date().toISOString(), noteId]
+      [JSON.stringify(comments), toMySQLDatetime(new Date().toISOString()), noteId]
     );
   }
 
@@ -459,6 +466,7 @@ export class NoteRepository implements INoteRepository {
     const note = await this.findById(noteId);
     if (!note || note.ownerId !== ownerId) return;
 
+    const now = toMySQLDatetime(new Date().toISOString());
     await execute(
       `UPDATE notes SET 
         is_deleted = 1, 
@@ -471,7 +479,7 @@ export class NoteRepository implements INoteRepository {
         favorite = 0,
         updated_at = ?
       WHERE id = ? AND owner_id = ?`,
-      [new Date().toISOString(), new Date().toISOString(), noteId, ownerId]
+      [now, now, noteId, ownerId]
     );
   }
 
@@ -488,7 +496,7 @@ export class NoteRepository implements INoteRepository {
         original_favorite = NULL,
         updated_at = ?
       WHERE id = ? AND owner_id = ?`,
-      [new Date().toISOString(), noteId, ownerId]
+      [toMySQLDatetime(new Date().toISOString()), noteId, ownerId]
     );
   }
 
@@ -511,7 +519,7 @@ export class NoteRepository implements INoteRepository {
   async updateFolderReference(folderId: string, ownerId: string, newFolderId: string | null): Promise<number> {
     const result = await execute(
       'UPDATE notes SET folder_id = ?, updated_at = ? WHERE folder_id = ? AND owner_id = ?',
-      [newFolderId, new Date().toISOString(), folderId, ownerId]
+      [newFolderId, toMySQLDatetime(new Date().toISOString()), folderId, ownerId]
     );
     return result.affectedRows;
   }
