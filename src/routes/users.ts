@@ -51,7 +51,7 @@ export function registerUserRoutes(app: FastifyInstance) {
 
   // Create user
   app.post(prefix, async (req, reply) => {
-    const data = req.body as { email: string; password: string; name: string; username?: string; role?: string };
+    const data = req.body as { email: string; password: string; name: string; username?: string; role?: 'admin' | 'moderator' | 'user' };
     const user = await getDB().users.create(data);
     reply.code(201);
     return user;

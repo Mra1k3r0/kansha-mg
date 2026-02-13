@@ -11,11 +11,20 @@ import { getDB } from './database/index.js';
 import { registerRoutes } from './routes/index.js';
 
 async function main() {
-  const app = Fastify({ logger: false });
+  const app = Fastify({ 
+    logger: false,
+    bodyLimit: 50 * 1024 * 1024, // 50MB body limit for large notes
+  });
   const db = getDB();
 
   // Register CORS
   await app.register(cors, { origin: true });
+
+  // Log all incoming requests
+  app.addHook('onRequest', async (request) => {
+    const timestamp = new Date().toISOString();
+    console.log(`[${timestamp}] ${request.method} ${request.url}`);
+  });
 
   // API Key Authentication - runs on every request
   app.addHook('onRequest', async (request, reply) => {
@@ -27,14 +36,18 @@ async function main() {
     const apiKey = request.headers['x-api-key'] || request.headers['authorization']?.replace('Bearer ', '');
     
     if (!apiKey) {
+      console.log(`[AUTH] Rejected - Missing API key for ${request.url}`);
       reply.code(401).send({ error: 'Missing API key. Include X-API-Key header.' });
       return;
     }
 
     if (apiKey !== config.security.apiKey) {
+      console.log(`[AUTH] Rejected - Invalid API key for ${request.url}`);
       reply.code(403).send({ error: 'Invalid API key' });
       return;
     }
+    
+    console.log(`[AUTH] Accepted for ${request.url}`);
   });
 
   // Connect to database
@@ -47,6 +60,22 @@ async function main() {
     console.error(err);
     process.exit(1);
   }
+
+  // Global error handler - return meaningful error messages
+  app.setErrorHandler((error: Error & { statusCode?: number }, request, reply) => {
+    // Log to both logger and console for visibility
+    const errorMsg = error.message || 'Unknown error';
+    const errorStack = error.stack || 'No stack trace';
+    
+    logger.error({ error: errorMsg, stack: errorStack, url: request.url }, 'Request error');
+    console.error(`[ERROR] ${request.method} ${request.url}:`, errorMsg);
+    console.error(`[ERROR STACK]`, errorStack);
+    
+    reply.status(error.statusCode || 500).send({
+      error: errorMsg,
+      statusCode: error.statusCode || 500,
+    });
+  });
 
   // Register routes
   registerRoutes(app);

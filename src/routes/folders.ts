@@ -53,10 +53,33 @@ export function registerFolderRoutes(app: FastifyInstance) {
   });
 
   // Bulk upsert folders
-  app.post(`${prefix}/bulk-upsert`, async (req) => {
-    const folders = req.body as Array<{ id: string; ownerId: string; [key: string]: unknown }>;
-    const count = await getDB().folders.bulkUpsert(folders);
-    return { synced: count };
+  app.post(`${prefix}/bulk-upsert`, async (req, reply) => {
+    console.log('[Folders] Bulk upsert request received');
+    try {
+      const folders = req.body as Array<{ id: string; ownerId: string; [key: string]: unknown }>;
+      console.log(`[Folders] Bulk upsert: ${Array.isArray(folders) ? folders.length : 'NOT AN ARRAY'} items`);
+      
+      if (!Array.isArray(folders)) {
+        console.log('[Folders] Bulk upsert error: Request body is not an array');
+        return reply.code(400).send({ error: 'Request body must be an array of folders' });
+      }
+      
+      if (folders.length > 0) {
+        console.log(`[Folders] First folder ID: ${folders[0]?.id}, ownerId: ${folders[0]?.ownerId}`);
+      }
+      
+      const count = await getDB().folders.bulkUpsert(folders);
+      console.log(`[Folders] Bulk upsert success: ${count} folders synced`);
+      return { synced: count };
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      const errStack = error instanceof Error ? error.stack : 'No stack';
+      console.error('[Folders] Bulk upsert error:', errMsg);
+      console.error('[Folders] Bulk upsert stack:', errStack);
+      return reply.code(500).send({ 
+        error: errMsg || 'Failed to bulk upsert folders' 
+      });
+    }
   });
 
   // Update folder

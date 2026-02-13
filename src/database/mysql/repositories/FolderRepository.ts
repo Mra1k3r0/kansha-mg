@@ -8,7 +8,7 @@ import type { RowDataPacket } from 'mysql2/promise';
 import type { IFolderRepository, FolderQueryOptions } from '../../interfaces/IFolderRepository.js';
 import type { PaginatedResult, QueryOptions } from '../../interfaces/IRepository.js';
 import type { Folder, CreateFolderDTO, UpdateFolderDTO } from '../../../domain/models/Folder.js';
-import { query, execute, withTransaction } from '../connection.js';
+import { query, execute } from '../connection.js';
 
 interface FolderRow extends RowDataPacket {
   id: string;
@@ -234,12 +234,29 @@ export class FolderRepository implements IFolderRepository {
   async bulkUpsert(folders: Array<Partial<Folder> & { id: string; ownerId: string }>): Promise<number> {
     let count = 0;
     
-    await withTransaction(async () => {
-      for (const folder of folders) {
-        await this.upsert(folder.id, folder.ownerId, folder);
+    // Process each folder individually - upserts are idempotent
+    // Using Promise.allSettled to continue even if some fail
+    const results = await Promise.allSettled(
+      folders.map(async (folder, index) => {
+        try {
+          await this.upsert(folder.id, folder.ownerId, folder);
+          return 1;
+        } catch (error) {
+          console.error(`[Folders] Upsert failed for folder ${index} (${folder.id}):`, error instanceof Error ? error.message : error);
+          throw error;
+        }
+      })
+    );
+
+    // Count successful upserts and log failures
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
+      if (result.status === 'fulfilled') {
         count++;
+      } else {
+        console.error(`[Folders] Folder ${i} rejected:`, result.reason?.message || result.reason);
       }
-    });
+    }
 
     return count;
   }

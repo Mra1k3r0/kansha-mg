@@ -65,10 +65,33 @@ export function registerNoteRoutes(app: FastifyInstance) {
   });
 
   // Bulk upsert notes
-  app.post(`${prefix}/bulk-upsert`, async (req) => {
-    const notes = req.body as Array<{ id: string; ownerId: string; [key: string]: unknown }>;
-    const count = await getDB().notes.bulkUpsert(notes);
-    return { synced: count };
+  app.post(`${prefix}/bulk-upsert`, async (req, reply) => {
+    console.log('[Notes] Bulk upsert request received');
+    try {
+      const notes = req.body as Array<{ id: string; ownerId: string; [key: string]: unknown }>;
+      console.log(`[Notes] Bulk upsert: ${Array.isArray(notes) ? notes.length : 'NOT AN ARRAY'} items`);
+      
+      if (!Array.isArray(notes)) {
+        console.log('[Notes] Bulk upsert error: Request body is not an array');
+        return reply.code(400).send({ error: 'Request body must be an array of notes' });
+      }
+      
+      if (notes.length > 0) {
+        console.log(`[Notes] First note ID: ${notes[0]?.id}, ownerId: ${notes[0]?.ownerId}`);
+      }
+      
+      const count = await getDB().notes.bulkUpsert(notes);
+      console.log(`[Notes] Bulk upsert success: ${count} notes synced`);
+      return { synced: count };
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      const errStack = error instanceof Error ? error.stack : 'No stack';
+      console.error('[Notes] Bulk upsert error:', errMsg);
+      console.error('[Notes] Bulk upsert stack:', errStack);
+      return reply.code(500).send({ 
+        error: errMsg || 'Failed to bulk upsert notes' 
+      });
+    }
   });
 
   // Update folder reference

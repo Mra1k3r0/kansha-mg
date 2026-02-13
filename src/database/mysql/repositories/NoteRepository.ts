@@ -15,7 +15,7 @@ import type {
   Comment,
   Visibility 
 } from '../../../domain/models/Note.js';
-import { query, execute, withTransaction } from '../connection.js';
+import { query, execute } from '../connection.js';
 
 interface NoteRow extends RowDataPacket {
   id: string;
@@ -399,12 +399,29 @@ export class NoteRepository implements INoteRepository {
   async bulkUpsert(notes: Array<Partial<Note> & { id: string; ownerId: string }>): Promise<number> {
     let count = 0;
     
-    await withTransaction(async () => {
-      for (const note of notes) {
-        await this.upsert(note.id, note.ownerId, note);
+    // Process each note individually - upserts are idempotent
+    // Using Promise.allSettled to continue even if some fail
+    const results = await Promise.allSettled(
+      notes.map(async (note, index) => {
+        try {
+          await this.upsert(note.id, note.ownerId, note);
+          return 1;
+        } catch (error) {
+          console.error(`[Notes] Upsert failed for note ${index} (${note.id}):`, error instanceof Error ? error.message : error);
+          throw error;
+        }
+      })
+    );
+
+    // Count successful upserts and log failures
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
+      if (result.status === 'fulfilled') {
         count++;
+      } else {
+        console.error(`[Notes] Note ${i} rejected:`, result.reason?.message || result.reason);
       }
-    });
+    }
 
     return count;
   }
