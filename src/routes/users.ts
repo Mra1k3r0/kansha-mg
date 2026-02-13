@@ -57,6 +57,36 @@ export function registerUserRoutes(app: FastifyInstance) {
     return user;
   });
 
+  // Bulk upsert users (for sync)
+  app.post(`${prefix}/bulk-upsert`, async (req, reply) => {
+    console.log('[Users] Bulk upsert request received');
+    try {
+      const users = req.body as Array<{ id: string; [key: string]: unknown }>;
+      console.log(`[Users] Bulk upsert: ${Array.isArray(users) ? users.length : 'NOT AN ARRAY'} items`);
+      
+      if (!Array.isArray(users)) {
+        console.log('[Users] Bulk upsert error: Request body is not an array');
+        return reply.code(400).send({ error: 'Request body must be an array of users' });
+      }
+      
+      if (users.length > 0) {
+        console.log(`[Users] First user ID: ${users[0]?.id}, email: ${users[0]?.email}`);
+      }
+      
+      const count = await getDB().users.bulkUpsert(users);
+      console.log(`[Users] Bulk upsert success: ${count} users synced`);
+      return { synced: count };
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      const errStack = error instanceof Error ? error.stack : 'No stack';
+      console.error('[Users] Bulk upsert error:', errMsg);
+      console.error('[Users] Bulk upsert stack:', errStack);
+      return reply.code(500).send({ 
+        error: errMsg || 'Failed to bulk upsert users' 
+      });
+    }
+  });
+
   // Update user
   app.put(`${prefix}/:id`, async (req) => {
     const { id } = req.params as { id: string };

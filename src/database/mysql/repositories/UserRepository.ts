@@ -9,6 +9,12 @@ import type { PaginatedResult, QueryOptions } from '../../interfaces/IRepository
 import type { User, CreateUserDTO, UpdateUserDTO, HashAlgorithm } from '../../../domain/models/User.js';
 import { query, execute } from '../connection.js';
 
+// Convert ISO 8601 datetime to MySQL datetime format
+function toMySQLDatetime(isoString: string | null | undefined): string | null {
+  if (!isoString) return null;
+  return isoString.replace('T', ' ').replace(/\.\d{3}Z$/, '').replace('Z', '');
+}
+
 interface UserRow extends RowDataPacket {
   id: string;
   username: string;
@@ -117,7 +123,7 @@ export class UserRepository implements IUserRepository {
 
   async create(data: CreateUserDTO): Promise<User> {
     const id = uuidv4();
-    const now = new Date().toISOString();
+    const now = toMySQLDatetime(new Date().toISOString());
     const role = data.role || 'user';
     const username = data.username || data.email.split('@')[0].toLowerCase().replace(/[^a-z0-9]/g, '') + '_' + Math.random().toString(36).substring(2, 6);
 
@@ -144,7 +150,7 @@ export class UserRepository implements IUserRepository {
       params.push(data.suspended ? 1 : 0);
       if (data.suspended) {
         updates.push('suspended_at = ?');
-        params.push(new Date().toISOString());
+        params.push(toMySQLDatetime(new Date().toISOString()));
       } else {
         updates.push('suspended_at = NULL', 'suspended_reason = NULL');
       }
@@ -154,7 +160,7 @@ export class UserRepository implements IUserRepository {
     if (updates.length === 0) return this.findById(id);
 
     updates.push('updated_at = ?');
-    params.push(new Date().toISOString(), id);
+    params.push(toMySQLDatetime(new Date().toISOString()), id);
 
     await execute(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`, params);
     return this.findById(id);
@@ -185,27 +191,115 @@ export class UserRepository implements IUserRepository {
   }
 
   async updateLastLogin(userId: string): Promise<void> {
-    const now = new Date().toISOString();
+    const now = toMySQLDatetime(new Date().toISOString());
     await execute('UPDATE users SET last_login_at = ?, last_seen_at = ? WHERE id = ?', [now, now, userId]);
   }
 
   async updateLastSeen(userId: string): Promise<void> {
-    await execute('UPDATE users SET last_seen_at = ? WHERE id = ?', [new Date().toISOString(), userId]);
+    await execute('UPDATE users SET last_seen_at = ? WHERE id = ?', [toMySQLDatetime(new Date().toISOString()), userId]);
   }
 
   async updateNotesTimestamp(userId: string): Promise<void> {
-    await execute('UPDATE users SET notes_updated_at = ? WHERE id = ?', [new Date().toISOString(), userId]);
+    await execute('UPDATE users SET notes_updated_at = ? WHERE id = ?', [toMySQLDatetime(new Date().toISOString()), userId]);
   }
 
   async updatePasswordHash(userId: string, hash: string, algorithm: string): Promise<void> {
-    await execute('UPDATE users SET password_hash = ?, hash_algorithm = ?, updated_at = ? WHERE id = ?', [hash, algorithm, new Date().toISOString(), userId]);
+    await execute('UPDATE users SET password_hash = ?, hash_algorithm = ?, updated_at = ? WHERE id = ?', [hash, algorithm, toMySQLDatetime(new Date().toISOString()), userId]);
   }
 
   async suspendUser(userId: string, reason?: string): Promise<void> {
-    await execute('UPDATE users SET suspended = 1, suspended_at = ?, suspended_reason = ?, updated_at = ? WHERE id = ?', [new Date().toISOString(), reason || null, new Date().toISOString(), userId]);
+    const now = toMySQLDatetime(new Date().toISOString());
+    await execute('UPDATE users SET suspended = 1, suspended_at = ?, suspended_reason = ?, updated_at = ? WHERE id = ?', [now, reason || null, now, userId]);
   }
 
   async unsuspendUser(userId: string): Promise<void> {
-    await execute('UPDATE users SET suspended = 0, suspended_at = NULL, suspended_reason = NULL, updated_at = ? WHERE id = ?', [new Date().toISOString(), userId]);
+    await execute('UPDATE users SET suspended = 0, suspended_at = NULL, suspended_reason = NULL, updated_at = ? WHERE id = ?', [toMySQLDatetime(new Date().toISOString()), userId]);
+  }
+
+  // Upsert a single user (for sync)
+  async upsert(id: string, data: Partial<User>): Promise<User> {
+    const existing = await query<UserRow[]>('SELECT id FROM users WHERE id = ?', [id]);
+
+    if (existing.length > 0) {
+      // Update existing user
+      const updates: string[] = [];
+      const params: unknown[] = [];
+
+      if (data.name !== undefined) { updates.push('name = ?'); params.push(data.name); }
+      if (data.username !== undefined) { updates.push('username = ?'); params.push(data.username); }
+      if (data.email !== undefined) { updates.push('email = ?'); params.push(data.email); }
+      if (data.passwordHash !== undefined) { updates.push('password_hash = ?'); params.push(data.passwordHash); }
+      if (data.hashAlgorithm !== undefined) { updates.push('hash_algorithm = ?'); params.push(data.hashAlgorithm); }
+      if (data.role !== undefined) { updates.push('role = ?'); params.push(data.role); }
+      if (data.permissions !== undefined) { updates.push('permissions = ?'); params.push(JSON.stringify(data.permissions)); }
+      if (data.suspended !== undefined) { updates.push('suspended = ?'); params.push(data.suspended ? 1 : 0); }
+      if (data.suspendedAt !== undefined) { updates.push('suspended_at = ?'); params.push(toMySQLDatetime(data.suspendedAt)); }
+      if (data.suspendedReason !== undefined) { updates.push('suspended_reason = ?'); params.push(data.suspendedReason); }
+      if (data.lastLoginAt !== undefined) { updates.push('last_login_at = ?'); params.push(toMySQLDatetime(data.lastLoginAt)); }
+      if (data.lastSeenAt !== undefined) { updates.push('last_seen_at = ?'); params.push(toMySQLDatetime(data.lastSeenAt)); }
+      if (data.notesUpdatedAt !== undefined) { updates.push('notes_updated_at = ?'); params.push(toMySQLDatetime(data.notesUpdatedAt)); }
+
+      if (updates.length > 0) {
+        updates.push('updated_at = ?');
+        params.push(toMySQLDatetime(data.updatedAt || new Date().toISOString()));
+        params.push(id);
+        await execute(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`, params);
+      }
+    } else {
+      // Insert new user
+      const now = toMySQLDatetime(new Date().toISOString());
+      await execute(
+        `INSERT INTO users (id, username, email, password_hash, hash_algorithm, name, role, permissions, suspended, suspended_at, suspended_reason, last_login_at, last_seen_at, notes_updated_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id,
+          data.username || data.email?.split('@')[0] || 'user',
+          data.email || '',
+          data.passwordHash || '',
+          data.hashAlgorithm || 'pbkdf2',
+          data.name || '',
+          data.role || 'user',
+          JSON.stringify(data.permissions || []),
+          data.suspended ? 1 : 0,
+          toMySQLDatetime(data.suspendedAt),
+          data.suspendedReason || null,
+          toMySQLDatetime(data.lastLoginAt),
+          toMySQLDatetime(data.lastSeenAt),
+          toMySQLDatetime(data.notesUpdatedAt),
+          toMySQLDatetime(data.createdAt) || now,
+          toMySQLDatetime(data.updatedAt) || now,
+        ]
+      );
+    }
+
+    return this.findById(id) as Promise<User>;
+  }
+
+  // Bulk upsert users (for sync)
+  async bulkUpsert(users: Array<Partial<User> & { id: string }>): Promise<number> {
+    let count = 0;
+
+    const results = await Promise.allSettled(
+      users.map(async (user, index) => {
+        try {
+          await this.upsert(user.id, user);
+          return 1;
+        } catch (error) {
+          console.error(`[Users] Upsert failed for user ${index} (${user.id}):`, error instanceof Error ? error.message : error);
+          throw error;
+        }
+      })
+    );
+
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
+      if (result.status === 'fulfilled') {
+        count++;
+      } else {
+        console.error(`[Users] User ${i} rejected:`, result.reason?.message || result.reason);
+      }
+    }
+
+    return count;
   }
 }

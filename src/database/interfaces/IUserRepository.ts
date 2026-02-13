@@ -21,4 +21,6 @@ export interface IUserRepository extends IRepository<User, CreateUserDTO, Update
   updatePasswordHash(userId: string, hash: string, algorithm: string): Promise<void>;
   suspendUser(userId: string, reason?: string): Promise<void>;
   unsuspendUser(userId: string): Promise<void>;
+  upsert(id: string, data: Partial<User>): Promise<User>;
+  bulkUpsert(users: Array<Partial<User> & { id: string }>): Promise<number>;
 }
